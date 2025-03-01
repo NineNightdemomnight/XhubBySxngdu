@@ -1,55 +1,84 @@
-const express = require('express');
-const { google } = require('googleapis');
-const fs = require('fs');
-const path = require('path');
-const app = express();
-const port = 3000;
+const { Client, Intents, MessageEmbed } = require('discord.js');
+const axios = require('axios');
+const { token, channel, logid } = require('./config.json'); // Store sensitive data in a separate config.json
 
-// ใช้ express สำหรับการรับข้อมูล POST
-app.use(express.json());  // ใช้เพื่อรับข้อมูล JSON
-app.use(express.urlencoded({ extended: true }));  // ใช้เพื่อรับข้อมูล form-data
-
-// ตั้งค่าการเชื่อมต่อกับ Google Sheets API
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'path/to/your/service-account-file.json',  // ใส่ path ของไฟล์ JSON ของ Service Account
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+const client = new Client({
+    intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.DIRECT_MESSAGES],
 });
 
-const sheets = google.sheets({ version: 'v4', auth });
-
-// ID ของ Google Sheets
-const spreadsheetId = 'your-google-sheet-id';  // ใส่ ID ของ Google Sheets
-
-// เส้นทางเพื่อรับข้อมูลและส่งไปยัง Google Sheets
-app.post('/send-to-sheet', async (req, res) => {
-  try {
-    const { message } = req.body;
-
-    // ข้อมูลที่ต้องการจะส่งไปยัง Google Sheets
-    const values = [
-      [new Date().toISOString(), message]  // ใส่วันที่และข้อความที่รับมาจาก HTTP request
-    ];
-
-    const resource = {
-      values,
-    };
-
-    // ใช้ API เพิ่มข้อมูลลงใน Google Sheets
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: 'Sheet1!A:B',  // ช่วงที่ต้องการแทรกข้อมูล (A และ B ในแถวแรก)
-      valueInputOption: 'RAW',
-      resource,
-    });
-
-    res.status(200).send('ข้อมูลถูกส่งไปยัง Google Sheets แล้ว');
-  } catch (error) {
-    console.error('Error sending data to Google Sheets:', error);
-    res.status(500).send('เกิดข้อผิดพลาดในการส่งข้อมูล');
-  }
+client.once('ready', () => {
+    console.log('Connected!');
 });
 
-// เริ่มเซิร์ฟเวอร์
-app.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isCommand()) return;
+
+    if (interaction.commandName === 'uptimerobot') {
+        const link = interaction.options.getString('link');
+        const logChannel = await interaction.guild.channels.fetch(logid);
+
+        if (interaction.channel.id === channel) {
+            if (link.includes('repl.co')) {
+                const decodeUrl = encodeURIComponent(link);
+                const decodeGlobal = encodeURIComponent(interaction.guild.name);
+                const url = 'https://api.uptimerobot.com/v2/newMonitor';
+                const data = `api_key=u2393216-744109edddc71502ee72d23c&format=json&type=1&url=${decodeUrl}&friendly_name=${decodeGlobal}`;
+                const headers = {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Cache-Control': 'no-cache',
+                };
+
+                try {
+                    const response = await axios.post(url, data, { headers });
+                    if (response.data.stat === 'ok') {
+                        const emlog = new MessageEmbed()
+                            .setTitle('Uptimerobot')
+                            .setDescription(`\n > ผู้ใช้บริการ: ${interaction.user.tag}\n> สถานะ: **สำเร็จ**`)
+                            .setColor(0x83db18);
+                        await logChannel.send({ embeds: [emlog] });
+
+                        const successEmbed = new MessageEmbed()
+                            .setTitle('✅ เพิ่มลงในระบบสำเร็จ')
+                            .setDescription(`เราได้เพิ่ม[ลิงก์ของคุณ](${link})ไว้ในระบบเรียบร้อยแล้ว!`)
+                            .setColor(0x83db18);
+                        await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+                    } else {
+                        if (response.data.error.type.includes('already_exists')) {
+                            const alreadyExistsEmbed = new MessageEmbed()
+                                .setTitle('❌ ทำรายการไม่สำเร็จ')
+                                .setDescription('เนื่องจากลิงก์ของคุณนั้นได้อยู่ในระบบเรียบร้อยแล้ว!')
+                                .setColor(0xfff200);
+                            await interaction.reply({ embeds: [alreadyExistsEmbed], ephemeral: true });
+                        } else {
+                            const invalidLinkEmbed = new MessageEmbed()
+                                .setTitle('❌ ทำรายการไม่สำเร็จ')
+                                .setDescription('เนื่องจากลิงก์ที่คุณระบุมาไม่ถูกต้อง กรุณาตรวจสอบใหม่อีกครั้ง!')
+                                .setColor(0xff002f);
+                            await interaction.reply({ embeds: [invalidLinkEmbed], ephemeral: true });
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error sending request:', error);
+                    const errorEmbed = new MessageEmbed()
+                        .setTitle('❌ ทำรายการไม่สำเร็จ')
+                        .setDescription('เกิดข้อผิดพลาดขณะส่งคำขอ กรุณาลองใหม่อีกครั้ง!')
+                        .setColor(0xff002f);
+                    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                }
+            } else {
+                const invalidLinkEmbed = new MessageEmbed()
+                    .setTitle('❌ ทำรายการไม่สำเร็จ')
+                    .setDescription('กรุณาใส่ลิงก์ของ replit เท่านั้นนะครับ!')
+                    .setColor(0xff002f);
+                await interaction.reply({ embeds: [invalidLinkEmbed], ephemeral: true });
+            }
+        } else {
+            await interaction.reply({
+                content: '# || กรุณาใช้คำสั่งในช่องให้ถูกต้อง ||',
+                ephemeral: true,
+            });
+        }
+    }
 });
+
+client.login(token);
