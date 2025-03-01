@@ -1,64 +1,55 @@
+const express = require('express');
 const { google } = require('googleapis');
-const { OAuth2 } = require('google-auth-library');
 const fs = require('fs');
+const path = require('path');
+const app = express();
+const port = 3000;
 
-// ฟังก์ชันเพื่อรับการยืนยันตัวตน (OAuth2) จาก Google
-async function authenticateGoogleAPI() {
-    const credentials = JSON.parse(fs.readFileSync('credentials.json'));
-    const { client_id, client_secret, redirect_uris } = credentials.installed;
-    const oauth2Client = new OAuth2(client_id, client_secret, redirect_uris[0]);
+// ใช้ express สำหรับการรับข้อมูล POST
+app.use(express.json());  // ใช้เพื่อรับข้อมูล JSON
+app.use(express.urlencoded({ extended: true }));  // ใช้เพื่อรับข้อมูล form-data
 
-    // สร้าง URL สำหรับการยืนยันตัวตน
-    const authUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: 'https://www.googleapis.com/auth/spreadsheets',
-    });
+// ตั้งค่าการเชื่อมต่อกับ Google Sheets API
+const auth = new google.auth.GoogleAuth({
+  keyFile: 'path/to/your/service-account-file.json',  // ใส่ path ของไฟล์ JSON ของ Service Account
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+});
 
-    console.log('Authorize this app by visiting this url:', authUrl);
-    // เมื่อผู้ใช้ยืนยันตัวตนแล้ว ให้นำรหัสที่ได้จาก URL มาใส่
-    const code = 'AUTHORIZATION_CODE'; // ใส่รหัสที่ได้รับจาก URL ที่ผู้ใช้ยืนยัน
+const sheets = google.sheets({ version: 'v4', auth });
 
-    // ใช้รหัสเพื่อรับ token
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+// ID ของ Google Sheets
+const spreadsheetId = 'your-google-sheet-id';  // ใส่ ID ของ Google Sheets
 
-    return oauth2Client;
-}
+// เส้นทางเพื่อรับข้อมูลและส่งไปยัง Google Sheets
+app.post('/send-to-sheet', async (req, res) => {
+  try {
+    const { message } = req.body;
 
-// ฟังก์ชันเพื่ออัปโหลดข้อมูลลงใน Google Sheets
-async function uploadDataToSheet(auth) {
-    const sheets = google.sheets({ version: 'v4', auth });
-    const spreadsheetId = 'YOUR_SPREADSHEET_ID'; // เปลี่ยนเป็น ID ของ Google Sheet ที่คุณต้องการ
-    const range = 'Sheet1!A1'; // เปลี่ยนเป็นช่วงเซลล์ที่คุณต้องการอัปโหลดข้อมูล
-
+    // ข้อมูลที่ต้องการจะส่งไปยัง Google Sheets
     const values = [
-        ['ข้อมูลที่ 1', 'ข้อมูลที่ 2', 'ข้อมูลที่ 3'], // ตัวอย่างข้อมูลที่ต้องการอัปโหลด
+      [new Date().toISOString(), message]  // ใส่วันที่และข้อความที่รับมาจาก HTTP request
     ];
 
     const resource = {
-        values,
+      values,
     };
 
-    try {
-        const response = await sheets.spreadsheets.values.update({
-            spreadsheetId,
-            range,
-            valueInputOption: 'RAW',
-            resource,
-        });
-        console.log('Data uploaded to Google Sheets successfully', response.data);
-    } catch (error) {
-        console.error('Error uploading data to Google Sheets', error);
-    }
-}
+    // ใช้ API เพิ่มข้อมูลลงใน Google Sheets
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: 'Sheet1!A:B',  // ช่วงที่ต้องการแทรกข้อมูล (A และ B ในแถวแรก)
+      valueInputOption: 'RAW',
+      resource,
+    });
 
-// เส้นทางใหม่สำหรับการอัปโหลดข้อมูล
-app.get('/api/upload-to-sheet', async (req, res) => {
-    try {
-        const auth = await authenticateGoogleAPI();
-        await uploadDataToSheet(auth);
-        res.send('Data uploaded to Google Sheets successfully');
-    } catch (error) {
-        res.status(500).send('Failed to upload data to Google Sheets');
-    }
+    res.status(200).send('ข้อมูลถูกส่งไปยัง Google Sheets แล้ว');
+  } catch (error) {
+    console.error('Error sending data to Google Sheets:', error);
+    res.status(500).send('เกิดข้อผิดพลาดในการส่งข้อมูล');
+  }
+});
+
+// เริ่มเซิร์ฟเวอร์
+app.listen(port, () => {
+  console.log(`Server is running at http://localhost:${port}`);
 });
